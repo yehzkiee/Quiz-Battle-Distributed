@@ -1,0 +1,214 @@
+services:
+  nginx-lb:
+    image: nginx:1.27-alpine
+    container_name: quiz_nginx_lb
+    depends_on:
+      - frontend
+      - login-service
+      - user-service-1
+      - user-service-2
+      - matchmaking-service
+      - signaling-service
+      - ranking-service
+      - saga-service
+    ports:
+      - "80:80"
+      - "8080:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks:
+      - quiz-net
+
+  frontend:
+    build: ./frontend
+    container_name: quiz_frontend
+    ports:
+      - "5173:5173"
+    networks:
+      - quiz-net
+
+  login-service:
+    build: ./services/login-service
+    container_name: quiz_login_service
+    environment:
+      - PORT=5001
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - USER_SERVICE_URL=http://user-service-1:5002
+    depends_on:
+      - user-service-1
+    networks:
+      - quiz-net
+
+  user-service-1:
+    build: ./services/user-service
+    container_name: quiz_user_service_1
+    environment:
+      - PORT=5002
+      - GRPC_PORT=6002
+      - DB_HOST=pgpool
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:?DB_USER is required}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - DB_NAME=${DB_NAME:?DB_NAME is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - ROOT_ADMIN_USERNAME=${ROOT_ADMIN_USERNAME:-rootadmin}
+      - ROOT_ADMIN_PASSWORD=${ROOT_ADMIN_PASSWORD}
+      - DEFAULT_ADMIN_USERNAME=${DEFAULT_ADMIN_USERNAME:-admin}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+      - DEFAULT_INSTRUCTOR_USERNAME=${DEFAULT_INSTRUCTOR_USERNAME:-instructor}
+      - DEFAULT_INSTRUCTOR_PASSWORD=${DEFAULT_INSTRUCTOR_PASSWORD}
+    depends_on:
+      - postgresql-primary
+      - pgpool
+    restart: unless-stopped
+    networks:
+      - quiz-net
+
+  user-service-2:
+    build: ./services/user-service
+    container_name: quiz_user_service_2
+    environment:
+      - PORT=5002
+      - GRPC_PORT=6002
+      - DB_HOST=pgpool
+      - DB_PORT=5432
+      - DB_USER=${DB_USER:?DB_USER is required}
+      - DB_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - DB_NAME=${DB_NAME:?DB_NAME is required}
+      - JWT_SECRET=${JWT_SECRET:?JWT_SECRET is required}
+      - ROOT_ADMIN_USERNAME=${ROOT_ADMIN_USERNAME:-rootadmin}
+      - ROOT_ADMIN_PASSWORD=${ROOT_ADMIN_PASSWORD}
+      - DEFAULT_ADMIN_USERNAME=${DEFAULT_ADMIN_USERNAME:-admin}
+      - DEFAULT_ADMIN_PASSWORD=${DEFAULT_ADMIN_PASSWORD}
+      - DEFAULT_INSTRUCTOR_USERNAME=${DEFAULT_INSTRUCTOR_USERNAME:-instructor}
+      - DEFAULT_INSTRUCTOR_PASSWORD=${DEFAULT_INSTRUCTOR_PASSWORD}
+    depends_on:
+      - postgresql-primary
+      - pgpool
+    restart: unless-stopped
+    networks:
+      - quiz-net
+
+  matchmaking-service:
+    build: ./services/matchmaking-service
+    container_name: quiz_matchmaking_service
+    environment:
+      - PORT=5003
+      - USER_GRPC_HOST=user-service-1:6002
+    depends_on:
+      - user-service-1
+    networks:
+      - quiz-net
+
+  signaling-service:
+    build: ./services/signaling-service
+    container_name: quiz_signaling_service
+    environment:
+      - PORT=5004
+    networks:
+      - quiz-net
+
+  ranking-service:
+    build: ./services/ranking-service
+    container_name: quiz_ranking_service
+    environment:
+      - PORT=5005
+      - VALKEY_URL=redis://valkey-cache:6379
+    depends_on:
+      - valkey-cache
+    networks:
+      - quiz-net
+
+  saga-service:
+    build: ./services/saga-service
+    container_name: quiz_saga_service
+    environment:
+      - PORT=5006
+      - USER_SERVICE_URL=http://user-service-1:5002
+      - RANKING_SERVICE_URL=http://ranking-service:5005
+    depends_on:
+      - user-service-1
+      - ranking-service
+    networks:
+      - quiz-net
+
+  postgresql-primary:
+    image: bitnamilegacy/postgresql:17.6.0
+    container_name: quiz_postgresql_primary
+    environment:
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRESQL_USERNAME=${DB_USER:?DB_USER is required}
+      - POSTGRESQL_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - POSTGRESQL_DATABASE=${DB_NAME:?DB_NAME is required}
+      - POSTGRESQL_REPLICATION_MODE=master
+      - POSTGRESQL_REPLICATION_USER=${REPLICATION_USER:-repl_user}
+      - POSTGRESQL_REPLICATION_PASSWORD=${REPLICATION_PASSWORD:?REPLICATION_PASSWORD is required}
+    volumes:
+      - pg-primary-data:/bitnami/postgresql
+      - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - quiz-net
+
+  postgresql-standby:
+    image: bitnamilegacy/postgresql:17.6.0
+    container_name: quiz_postgresql_standby
+    environment:
+      - POSTGRESQL_REPLICATION_MODE=slave
+      - POSTGRESQL_MASTER_HOST=postgresql-primary
+      - POSTGRESQL_MASTER_PORT_NUMBER=5432
+      - POSTGRESQL_REPLICATION_USER=${REPLICATION_USER:-repl_user}
+      - POSTGRESQL_REPLICATION_PASSWORD=${REPLICATION_PASSWORD:?REPLICATION_PASSWORD is required}
+      - POSTGRESQL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - POSTGRESQL_USERNAME=${DB_USER:?DB_USER is required}
+      - POSTGRESQL_PASSWORD=${DB_PASSWORD:?DB_PASSWORD is required}
+      - POSTGRESQL_DATABASE=${DB_NAME:?DB_NAME is required}
+    depends_on:
+      - postgresql-primary
+    volumes:
+      - pg-standby-data:/bitnami/postgresql
+    networks:
+      - quiz-net
+
+  pgpool:
+    image: bitnamilegacy/pgpool:4.6.3
+    container_name: quiz_pgpool
+    environment:
+      - PGPOOL_BACKEND_NODES=0:postgresql-primary:5432,1:postgresql-standby:5432
+      - PGPOOL_SR_CHECK_USER=${REPLICATION_USER:-repl_user}
+      - PGPOOL_SR_CHECK_PASSWORD=${REPLICATION_PASSWORD:?REPLICATION_PASSWORD is required}
+      - PGPOOL_ENABLE_LOAD_BALANCING=yes
+      - PGPOOL_POSTGRES_USERNAME=postgres
+      - PGPOOL_POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      - PGPOOL_POSTGRES_CUSTOM_USERS=${DB_USER:?DB_USER is required}
+      - PGPOOL_POSTGRES_CUSTOM_PASSWORDS=${DB_PASSWORD:?DB_PASSWORD is required}
+      - PGPOOL_ADMIN_USERNAME=${PGPOOL_ADMIN_USERNAME:-admin}
+      - PGPOOL_ADMIN_PASSWORD=${PGPOOL_ADMIN_PASSWORD:?PGPOOL_ADMIN_PASSWORD is required}
+    depends_on:
+      - postgresql-primary
+      - postgresql-standby
+    networks:
+      - quiz-net
+
+  valkey-cache:
+    image: valkey/valkey:8-alpine
+    container_name: quiz_valkey_cache
+    networks:
+      - quiz-net
+
+  cloudflared-tunnel:
+    image: cloudflare/cloudflared:latest
+    container_name: quiz_cloudflared_tunnel
+    command: tunnel --no-autoupdate --url http://nginx-lb:80
+    depends_on:
+      - nginx-lb
+    networks:
+      - quiz-net
+    restart: unless-stopped
+
+networks:
+  quiz-net:
+    driver: bridge
+
+volumes:
+  pg-primary-data:
+  pg-standby-data:

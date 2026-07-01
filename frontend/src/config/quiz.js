@@ -1,0 +1,1 @@
+export const QUIZ_QUESTION_SECONDS = 30;

@@ -1,0 +1,11 @@
+{
+  "name": "ranking-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": { "start": "node server.js" },
+  "dependencies": {
+    "@fastify/cors": "^10.0.0",
+    "fastify": "^5.1.0",
+    "redis": "^4.7.0"
+  }
+}
